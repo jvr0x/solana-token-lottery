@@ -8,6 +8,7 @@ Token Lottery is a Solana program built with the Anchor framework that enables:
 - **NFT Lottery Tickets**: Each lottery ticket is a unique NFT from a verified collection
 - **Verifiable Randomness**: Winner selection uses Switchboard's on-demand randomness for provably fair results
 - **Time-bound Lotteries**: Configure start and end times for lottery periods
+- **Automated Prize Distribution**: Winners can claim the prize pot by proving ownership of the winning ticket NFT
 - **Metaplex Integration**: Full NFT metadata support with collection verification
 
 ## Features
@@ -108,6 +109,24 @@ Reveals the lottery winner using committed randomness (authority only).
 - Retrieves randomness value from Switchboard
 - Calculates winner: `randomness[0] % total_tickets`
 - Marks winner as chosen
+
+#### 6. `claim_winnings`
+Allows the winner to claim the lottery prize pot.
+
+**Actions:**
+- Validates winner has been chosen
+- Validates ticket is verified member of collection
+- Validates ticket belongs to correct collection
+- Validates ticket name matches winning ticket number
+- Validates caller owns the winning ticket NFT (amount > 0)
+- Transfers entire lottery pot to winner
+- Resets lottery_pot_amount to 0
+
+**Security:**
+- Only the holder of the winning ticket NFT can claim
+- Ticket must be part of the verified collection
+- Ticket metadata name must match "Token Lottery Ticket #[winner_number]"
+- Winner must hold at least 1 of the winning ticket in their account
 
 ## Technical Stack
 
@@ -269,6 +288,27 @@ const lotteryAccount = await program.account.tokenLottery.fetch(lotteryPda);
 console.log(`Winner is ticket #${lotteryAccount.winner}`);
 ```
 
+### 6. Claim Winnings (Winner Only)
+```typescript
+// Winner claims their prize
+await program.methods
+  .claimWinnings()
+  .accounts({
+    ticketMint: winningTicketMintPda,
+    collectionMint: collectionMintPda,
+    ticketMetadata: winningTicketMetadataPda,
+    ticketAccount: winnerTokenAccount, // Winner's ATA holding the winning ticket
+    collectionMetadata: collectionMetadataPda,
+    tokenMetadataProgram: METADATA_PROGRAM_ID,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  })
+  .rpc();
+
+// Verify funds received
+const winnerBalance = await provider.connection.getBalance(winnerPublicKey);
+console.log(`Winner received: ${winnerBalance} lamports`);
+```
+
 ## Security Considerations
 
 ### Randomness Security
@@ -280,11 +320,21 @@ console.log(`Winner is ticket #${lotteryAccount.winner}`);
 - Only lottery authority can commit randomness and reveal winner
 - Ticket purchases restricted to lottery time window
 - Winner can only be chosen once
+- Only holder of winning ticket NFT can claim prize
+
+### Prize Claiming Security
+- **NFT Ownership Verification**: Winner must hold the winning ticket NFT in their account
+- **Collection Verification**: Ticket must be part of the verified collection
+- **Metadata Validation**: Ticket name must exactly match the winning ticket number
+- **Amount Check**: Winner must hold at least 1 of the winning ticket (amount > 0)
+- **Single Claim**: Prize pot is emptied after claim, preventing double-claiming
+- **Null-byte Handling**: Metadata name is sanitized to remove null bytes before comparison
 
 ### NFT Security
 - Collection mint is a PDA owned by the program
 - Tickets are verifiable members of the collection
 - Metaplex metadata follows standard conventions
+- Winning ticket is derived deterministically from winner number
 
 ## Program Addresses
 
@@ -309,7 +359,10 @@ console.log(`Winner is ticket #${lotteryAccount.winner}`);
 | 0x1772 | RandomnessAlreadyRevealed | Randomness has already been committed/used |
 | 0x1773 | LotteryNotCompleted | Lottery end time has not been reached |
 | 0x1774 | WinnerChosen | Winner has already been selected |
-| 0x1775 | RandomnessNotResolved | Switchboard randomness is not yet available |
+| 0x1775 | WinnerNotChosen | Winner has not been chosen yet (required for claiming) |
+| 0x1776 | RandomnessNotResolved | Switchboard randomness is not yet available |
+| 0x1777 | NotVerifiedTicket | Ticket is not a verified member of the collection |
+| 0x1778 | IncorrectTicket | Ticket does not match the winning ticket or caller doesn't own it |
 
 ## Project Structure
 

@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::{accounts::signer, system_program};
+use anchor_spl::metadata::MetadataAccount;
 use anchor_spl::{
     associated_token::AssociatedToken,
     metadata::{
@@ -318,6 +319,64 @@ pub mod token_lottery {
 
         Ok(())
     }
+
+    pub fn claim_winnings(ctx: Context<ClaimWinnings>) -> Result<()> {
+        require!(
+            ctx.accounts.token_lottery.winner_chosen,
+            ErrorCode::WinnerNotChosen
+        );
+
+        // Check if token is a part of the collection
+        require!(
+            ctx.accounts
+                .ticket_metadata
+                .collection
+                .as_ref()
+                .unwrap()
+                .verified,
+            ErrorCode::NotVerifiedTicket
+        );
+        require!(
+            ctx.accounts
+                .ticket_metadata
+                .collection
+                .as_ref()
+                .unwrap()
+                .key
+                == ctx.accounts.collection_mint.key(),
+            ErrorCode::IncorrectTicket
+        );
+
+        let ticket_name = format!(
+            "{}{}",
+            NAME.to_owned(),
+            ctx.accounts.token_lottery.winner.to_string()
+        );
+
+        let metadata_name = ctx.accounts.ticket_metadata.name.replace("\u{0}", "");
+
+        msg!("Ticket name: {}", ticket_name);
+        msg!("Metdata name: {}", metadata_name);
+
+        // Check if the winner has the winning ticket
+        require!(metadata_name == ticket_name, ErrorCode::IncorrectTicket);
+        require!(
+            ctx.accounts.ticket_account.amount > 0,
+            ErrorCode::IncorrectTicket
+        );
+
+        **ctx
+            .accounts
+            .token_lottery
+            .to_account_info()
+            .try_borrow_mut_lamports()? -= ctx.accounts.token_lottery.lottery_pot_amount;
+        **ctx.accounts.payer.try_borrow_mut_lamports()? +=
+            ctx.accounts.token_lottery.lottery_pot_amount;
+
+        ctx.accounts.token_lottery.lottery_pot_amount = 0;
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -503,6 +562,55 @@ pub struct RevealWinner<'info> {
     pub randomness_account: UncheckedAccount<'info>,
 }
 
+#[derive(Accounts)]
+pub struct ClaimWinnings<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"token_lottery".as_ref()],
+        bump = token_lottery.bump,
+    )]
+    pub token_lottery: Account<'info, TokenLottery>,
+
+    #[account(
+        seeds = [token_lottery.winner.to_le_bytes().as_ref()],
+        bump,
+    )]
+    pub ticket_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        seeds = [b"collection_mint".as_ref()],
+        bump,
+    )]
+    pub collection_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        seeds = [b"metadata", token_metadata_program.key().as_ref(), ticket_mint.key().as_ref()],
+        bump,
+        seeds::program = token_metadata_program.key(),
+    )]
+    pub ticket_metadata: Account<'info, MetadataAccount>,
+
+    #[account(
+        associated_token::mint = ticket_mint,
+        associated_token::authority = payer,
+        associated_token::token_program = token_program,
+    )]
+    pub ticket_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        seeds = [b"metadata", token_metadata_program.key().as_ref(), collection_mint.key().as_ref()],
+        bump,
+        seeds::program = token_metadata_program.key(),
+    )]
+    pub collection_metadata: Account<'info, MetadataAccount>,
+
+    pub token_metadata_program: Program<'info, Metadata>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct TokenLottery {
@@ -530,6 +638,12 @@ pub enum ErrorCode {
     LotteryNotCompleted,
     #[msg("The winner has already been chosen")]
     WinnerChosen,
+    #[msg("The winner has not been chosen")]
+    WinnerNotChosen,
     #[msg("Randomness not resolved")]
     RandomnessNotResolved,
+    #[msg("Ticket not verified")]
+    NotVerifiedTicket,
+    #[msg("Incorrect Ticket")]
+    IncorrectTicket,
 }

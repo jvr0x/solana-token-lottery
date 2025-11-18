@@ -328,6 +328,56 @@
       "args": []
     },
     {
+      "name": "commit_randomness",
+      "discriminator": [
+        146,
+        52,
+        195,
+        220,
+        79,
+        30,
+        53,
+        26
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_lottery",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  108,
+                  111,
+                  116,
+                  116,
+                  101,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness_account"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize_config",
       "discriminator": [
         208,
@@ -583,6 +633,56 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "reveal_winner",
+      "discriminator": [
+        234,
+        209,
+        237,
+        109,
+        16,
+        196,
+        64,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_lottery",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  111,
+                  107,
+                  101,
+                  110,
+                  95,
+                  108,
+                  111,
+                  116,
+                  116,
+                  101,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness_account"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -605,6 +705,31 @@
       "code": 6000,
       "name": "LotteryNotOpen",
       "msg": "Lottery is not open"
+    },
+    {
+      "code": 6001,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6002,
+      "name": "RandomnessAlreadyRevealed",
+      "msg": "Randomness already revealed"
+    },
+    {
+      "code": 6003,
+      "name": "LotteryNotCompleted",
+      "msg": "Lottery Not Completed"
+    },
+    {
+      "code": 6004,
+      "name": "WinnerChosen",
+      "msg": "The winner has already been chosen"
+    },
+    {
+      "code": 6005,
+      "name": "RandomnessNotResolved",
+      "msg": "Randomness not resolved"
     }
   ],
   "types": [
@@ -619,7 +744,7 @@
           },
           {
             "name": "winner",
-            "type": "u8"
+            "type": "u64"
           },
           {
             "name": "winner_chosen",

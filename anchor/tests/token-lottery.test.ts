@@ -1,6 +1,8 @@
 import * as anchor from '@coral-xyz/anchor'
 import { Program } from '@coral-xyz/anchor'
 import { TOKEN_PROGRAM_ID } from '@coral-xyz/anchor/dist/cjs/utils/token'
+import * as sb from '@switchboard-xyz/on-demand'
+import SwitchboardIDL from '../switchboard.json'
 import { TokenLottery } from '../target/types/token_lottery'
 
 describe('tokenlottery', () => {
@@ -9,6 +11,26 @@ describe('tokenlottery', () => {
   const wallet = provider.wallet as anchor.Wallet
 
   const program = anchor.workspace.TokenLottery as Program<TokenLottery>
+
+  let switchboardProgram = new anchor.Program(SwitchboardIDL as anchor.Idl, provider)
+  const rngKp = anchor.web3.Keypair.generate()
+
+  // fetch the switchboard idl and store it
+  // beforeAll(async () => {
+  //   const switchboardIDL = await anchor.Program.fetchIdl(
+  //     sb.ON_DEMAND_MAINNET_PID,
+  //     {connection: new anchor.web3.Connection("https://api.mainnet-beta.solana.com")}
+  //   ) as anchor.Idl;
+
+  //   var fs = require('fs');
+  //   fs.writeFile("switchboard.json", JSON.stringify(switchboardIDL), function(err) {
+  //     if (err) {
+  //       console.log(err);
+  //     }
+  //   })
+
+  //   switchboardProgram = new anchor.Program(switchboardIDL, provider);
+  // });
 
   async function buyTicket() {
     const buyTicketIx = await program.methods
@@ -79,5 +101,72 @@ describe('tokenlottery', () => {
     console.log('Your initLottery transaction signature', initLotterySignature)
 
     await buyTicket()
-  })
+    await buyTicket()
+    await buyTicket()
+    await buyTicket()
+    await buyTicket()
+    await buyTicket()
+    await buyTicket()
+    await buyTicket()
+
+    const queue = new anchor.web3.PublicKey('A43DyUGA7s8eXPxqEjJY6EBu1KKbNgfxF8h17VAHn13w')
+    const queueAccount = new sb.Queue(switchboardProgram, queue)
+
+    try {
+      await queueAccount.loadData()
+    } catch (error) {
+      console.log('Error', error)
+      process.exit(1)
+    }
+
+    const [randomness, createRandomnessIx] = await sb.Randomness.create(switchboardProgram, rngKp, queue)
+    const createRandomnessTx = await sb.asV0Tx({
+      connection: provider.connection,
+      ixs: [createRandomnessIx],
+      payer: wallet.publicKey,
+      signers: [wallet.payer, rngKp],
+    })
+
+    const createRandomnessSignature = await provider.connection.sendTransaction(createRandomnessTx)
+
+    // Wait for confirmation with finalized commitment
+    await provider.connection.confirmTransaction(createRandomnessSignature, 'finalized')
+    
+    console.log('createRandomnessSignature', createRandomnessSignature)
+
+    const sbCommitIx = await randomness.commitIx(queue)
+
+    const commitIx = await program.methods
+      .commitRandomness()
+      .accounts({
+        randomnessAccount: randomness.pubkey,
+      })
+      .instruction()
+
+    const commitComputeIx = anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({
+      units: 100000,
+    })
+
+    const commitPriorityIx = anchor.web3.ComputeBudgetProgram.setComputeUnitPrice({
+      microLamports: 1,
+    })
+
+    const commitBlockhashWithContext = await provider.connection.getLatestBlockhash()
+
+    const commitTx = new anchor.web3.Transaction({
+      feePayer: provider.wallet.publicKey,
+      blockhash: commitBlockhashWithContext.blockhash,
+      lastValidBlockHeight: commitBlockhashWithContext.lastValidBlockHeight,
+    })
+      .add(commitComputeIx)
+      .add(commitPriorityIx)
+      .add(sbCommitIx)
+      .add(commitIx);
+    
+    const commitSignature = await anchor.web3.sendAndConfirmTransaction(
+      provider.connection, commitTx, [wallet.payer]
+    );
+    
+    console.log('commitSignature', commitSignature);
+  }, 300000);
 })

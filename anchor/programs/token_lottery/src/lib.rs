@@ -10,6 +10,7 @@ use anchor_spl::{
     },
     token_interface::{mint_to, Mint, MintTo, TokenAccount, TokenInterface},
 };
+use switchboard_on_demand::RandomnessAccountData;
 
 declare_id!("BdRpZcRTZiZ6K25izHE8Sb497LLr2CCKvY4uFoGxVJwz");
 
@@ -257,6 +258,66 @@ pub mod token_lottery {
 
         Ok(())
     }
+
+    pub fn commit_randomness(ctx: Context<CommitRandomness>) -> Result<()> {
+        let clock = Clock::get()?;
+
+        let token_lottery = &mut ctx.accounts.token_lottery;
+
+        require!(
+            ctx.accounts.payer.key() == token_lottery.authority,
+            ErrorCode::Unauthorized
+        );
+
+        let randomness_data =
+            RandomnessAccountData::parse(ctx.accounts.randomness_account.data.borrow()).unwrap();
+
+        // if we already passed the slot it means the data was already revealed and someone
+        // could know who the winner would be
+        require!(
+            randomness_data.seed_slot == clock.slot - 1,
+            ErrorCode::RandomnessAlreadyRevealed
+        );
+
+        token_lottery.randomness_account = ctx.accounts.randomness_account.key();
+
+        Ok(())
+    }
+
+    pub fn reveal_winner(ctx: Context<RevealWinner>) -> Result<()> {
+        let clock = Clock::get()?;
+        let token_lottery = &mut ctx.accounts.token_lottery;
+
+        require!(
+            ctx.accounts.payer.key() == token_lottery.authority,
+            ErrorCode::Unauthorized
+        );
+
+        require!(
+            ctx.accounts.randomness_account.key() == token_lottery.randomness_account,
+            ErrorCode::RandomnessAlreadyRevealed
+        );
+
+        require!(
+            clock.slot >= token_lottery.end_time,
+            ErrorCode::LotteryNotCompleted
+        );
+
+        require!(!token_lottery.winner_chosen, ErrorCode::WinnerChosen);
+
+        let randomness_data =
+            RandomnessAccountData::parse(ctx.accounts.randomness_account.data.borrow()).unwrap();
+
+        let reveal_random_value = randomness_data
+            .get_value(clock.slot)
+            .map_err(|_| ErrorCode::RandomnessNotResolved)?;
+
+        let winner = reveal_random_value[0] as u64 % token_lottery.total_tickets;
+        token_lottery.winner = winner;
+        token_lottery.winner_chosen = true;
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -410,11 +471,43 @@ pub struct BuyTicket<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
+#[derive(Accounts)]
+pub struct CommitRandomness<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"token_lottery".as_ref()],
+        bump = token_lottery.bump,
+    )]
+    pub token_lottery: Account<'info, TokenLottery>,
+
+    /// CHECK: Checked by the Switchboardsmart contract
+    pub randomness_account: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct RevealWinner<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"token_lottery".as_ref()],
+        bump = token_lottery.bump,
+    )]
+    pub token_lottery: Account<'info, TokenLottery>,
+
+    /// CHECK: Checked by the Switchboardsmart contract
+    pub randomness_account: UncheckedAccount<'info>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct TokenLottery {
     pub bump: u8,
-    pub winner: u8,
+    pub winner: u64,
     pub winner_chosen: bool,
     pub start_time: u64,
     pub end_time: u64,
@@ -429,4 +522,14 @@ pub struct TokenLottery {
 pub enum ErrorCode {
     #[msg("Lottery is not open")]
     LotteryNotOpen,
+    #[msg("Unauthorized")]
+    Unauthorized,
+    #[msg("Randomness already revealed")]
+    RandomnessAlreadyRevealed,
+    #[msg("Lottery Not Completed")]
+    LotteryNotCompleted,
+    #[msg("The winner has already been chosen")]
+    WinnerChosen,
+    #[msg("Randomness not resolved")]
+    RandomnessNotResolved,
 }
